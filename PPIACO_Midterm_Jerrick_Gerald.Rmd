@@ -1,0 +1,205 @@
+---
+title: "Producer Price Index - Mid Term (JERRICK GERALD)"
+output: html_document
+---
+
+
+
+```{r cars}
+
+pacman::p_load(fredr, tidyverse, ggplot2, forecast, tseries, tsibble, tsbox)
+fredr_set_key("30b22d3bb2bf392a49d6c4d5e88bebdb")
+
+ppi<-fredr(series_id="PPIACO",
+                  observation_start=as.Date("1992-01-01"),
+                  observation_end=as.Date("2019-12-01"),
+                  frequency = 'm', 
+                  aggregation_method = 'avg')%>%
+  select(date,series_id,value)%>%
+  mutate(index_first_diff=value-lag(value),
+         index_second_diff=difference(value,differences=2))%>%
+  tsibble(index=date)
+source(file= paste0('intord.R'))
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+
+head(ppi)
+
+intord(ppi$value, year = 1992, freq = 12, period = 1)
+
+```
+
+
+```{r}
+
+pacman::p_load(patchwork)
+
+(ggAcf(ppi$index_first_diff)|ggPacf((ppi$index_first_diff)))
+
+
+train <- ppi$value[1:330]
+
+test <- ppi$value[331:336]
+
+train_ts = ts(train,start=c(1992,1),freq=12)
+test_ts = ts(test,start=c(2019,7),freq=12)
+
+test_ts
+
+
+```
+
+```{r}
+
+model_1 <- Arima(train_ts,
+                 order = c(3,1,0),xreg=seasonaldummy(train_ts))
+print(model_1)
+
+
+model_2 <- Arima(train_ts,
+                 order = c(1,1,7),xreg=seasonaldummy(train_ts))
+print(model_2)
+
+model_3 <- Arima(train_ts,order = c(5,1,5),xreg=seasonaldummy(train_ts))
+print(model_3)
+
+brute_force_model <- auto.arima(ts(train_ts),
+                                ic = 'aic',
+                                trace = T)
+
+```
+
+
+```{r}
+
+forecast_model1 <- forecast(model_1, h = 6,xreg=seasonaldummy(test_ts))
+print(forecast_model1)
+
+
+# Model - 2
+forecast_model2 <- forecast(model_2,h  = 6,xreg=seasonaldummy(test_ts))
+print(forecast_model2)
+
+
+# Model - 3
+forecast_model3 <- forecast(model_3,h = 6,xreg=seasonaldummy(test_ts))
+print(forecast_model3)
+
+autoplot(forecast_model1, xlim = c(2010.75, 2020.12))
+autoplot(forecast_model2,xlim = c(2010.75, 2020.12))
+
+autoplot(forecast_model3,xlim = c(2010.75, 2020.12))
+
+
+```
+
+```{r}
+
+
+Box.test(model_1$residuals, 
+         type = "Ljung-Box")
+
+Box.test(model_2$residuals, 
+         type = "Ljung-Box")
+
+Box.test(model_3$residuals, 
+         type = "Ljung-Box")
+```
+
+```{r}
+loss_functions <- function(predict, actual) {
+  predict <- as.vector(predict)
+  actual <- as.vector(actual)
+  mse <- mean((predict-actual)^2)
+  mae <- mean(abs(predict-actual))
+  mape <- mean(abs((predict-actual)/actual)*100)
+  msle <- mean((log(actual)- log(predict) )^2)
+  return(list(mse = mse,
+              mae = mae,
+              mape = mape,
+              msle = msle))
+}
+print("Model 1")
+# Model - 1
+p1loss_model_1 <- loss_functions(forecast_model1$mean, test)
+print(p1loss_model_1 )
+
+print("Model 2")
+# Model - 2
+p2loss_model_2 <- loss_functions(forecast_model2$mean, test)
+print(p2loss_model_2 )
+
+print("Model 3")
+# Model - 3
+p3loss_model_3 <- loss_functions(forecast_model3$mean, test)
+print(p3loss_model_3 )
+
+print(paste("Model RMSE:", sqrt(p1loss_model_1$mse)))
+print(paste("Model RMAE:", sqrt(p1loss_model_1 $mae)))
+
+
+print(paste("Model RMSE:", sqrt(p3loss_model_3 $mse)))
+print(paste("Model RMAE:", sqrt(p3loss_model_3 $mae)))
+
+
+```
+
+```{r}
+
+ppi_combination_object <- foreccomb(test,
+                                cbind(forecast_model1$mean[1:6],
+                                      forecast_model2$mean[1:6],
+                                      forecast_model3$mean[1:6]))
+print(ppi_combination_object)
+
+ppi_granger_bates <- comb_BG(ppi_combination_object)
+print(ppi_granger_bates)
+
+```
+
+```{r}
+print(paste("Model RMSE:", sqrt(p3loss_model_3$mse)))
+print(paste("Model RMAE:", sqrt(p3loss_model_3$mae)))
+# Model forecasts (from part iv)
+model1_forecast <- c(199.4832, 198.5128, 198.1493, 197.3025, 196.6013, 195.8563) 
+model2_forecast <- c(199.3482, 198.0698, 197.6313, 196.9074, 196.3287, 195.5238)
+model3_forecast <- c(199.9128, 199.7288, 199.1611, 197.9288, 197.6966,197.4147)
+
+# Actual test observations
+test_obs <- c(200.7, 199.2, 198.4 ,198.6, 199.0, 199.0)  
+
+# Assume model 1 is preferred 
+preferred_model <- model3_forecast
+
+# Create forecast combination object
+fc_object <- foreccomb(test_obs, cbind(model1_forecast, model2_forecast, model3_forecast))
+
+# Get Granger-Bates combined forecast
+gb_forecast <- comb_BG(fc_object)
+
+# Plot forecasts
+plot(test_obs, type="o", col="black", ylim=c(195,202), 
+     xlab="Time", ylab="Value")
+lines(preferred_model, col="blue", lwd=2) 
+lines(gb_forecast$Fitted, col="red", lwd=2)
+legend("topright", legend=c("Observed", "Preferred Model", "Granger-Bates"),
+       col=c("black", "blue", "red"), lwd=c(1,2,2), cex=0.8)
+
+```
+```{r}
+# Compute forecast errors
+preferred_error <- sqrt(mean((test_obs - preferred_model)^2)) 
+gb_error <- sqrt(mean((test_obs - gb_forecast$Fitted)^2))
+
+# Print forecast errors
+print(paste("Preferred model RMSE:", round(preferred_error, 2)))
+print(paste("Granger-Bates RMSE:", round(gb_error, 2)))
+
+```
+

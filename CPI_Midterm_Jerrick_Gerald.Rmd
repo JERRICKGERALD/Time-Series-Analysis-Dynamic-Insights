@@ -1,0 +1,326 @@
+---
+title: "(Consumer Price Index for All Urban Consumers: All Items in U.S. City Average) "
+author: "Jerrick"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+pacman::p_load(fredr, ggplot2, tidyverse, tsbox, tseries,
+               tsibble, forecast, tseries, lubridate,
+               expsmooth, WDI, knitr, broom, ggpubr,
+               stargazer, urca, patchwork,ForecastComb)
+
+```
+
+
+
+```{r}
+fredr_set_key("5a3f5a4d628dad0eeebb7dc5711f691c")
+cpi <- fredr(series_id = "CPIAUCSL",
+                    observation_start = as.Date("1992-01-01"),
+                    observation_end = as.Date("2019-12-31")) %>%
+  select(date, series_id, value) %>%
+  mutate(index_first_diff = value - lag(value),
+         index_second_diff = difference(value, differences = 2)) %>%
+  tsibble(index = date)
+  
+source(file= paste0('intord.R'))
+```
+
+
+
+# Plotting
+
+```{r}
+
+head(cpi)
+
+intord(cpi$value, year = 1992, freq = 12, period = 1)
+
+summary.data.frame(cpi)
+```
+First difference 
+
+# ACF and PACF
+
+```{r}
+
+acf_series_one_1 <- ggAcf(cpi$value,lag.max = 36) + ggtitle('ACF')
+
+
+pacf_series_one_1 <- ggPacf(cpi$value,lag.max = 36) + ggtitle('PACF')
+
+
+acf_series_one_1|pacf_series_one_1
+
+
+```
+
+
+```{r}
+
+pacman::p_load(patchwork)
+
+(ggAcf(cpi$index_first_diff)|ggPacf((cpi$index_first_diff)))
+
+
+```
+
+PACF decays faster than the PACF so it is an AR model
+
+
+# Train and test split
+
+```{r}
+
+train <- ts(cpi$value[1:330],start=c(1992,1),freq=12)
+
+test <- ts(cpi$value[331:336],start=c(2019,7),freq=12)
+test1<-cpi$value[331:336]
+
+test
+
+```
+
+
+# Modeling
+
+```{r}
+# Model - 1
+# p = 5, d = 1, q = 0
+
+model_1 <- Arima(train,order = c(5, 1, 3))
+
+print(model_1)
+```
+
+
+
+```{r}
+# Model - 2
+# p = 2, d = 1, q = 0
+model_2 <- Arima(train,order = c(5, 1, 1))
+
+print(model_2)
+
+```
+
+
+
+```{r}
+
+# Model - 3
+model_3 <- Arima(train,order = c(3, 1, 3))
+print(model_3)
+
+```
+
+
+
+
+# Brute force model
+```{r}
+
+brute_force_model <- auto.arima(train,ic = 'aic',trace = T)
+
+```
+
+
+# Serial Correlation
+
+```{r}
+
+ggAcf(model_1$residuals)
+
+ggAcf(model_2$residuals)
+
+ggAcf(model_3$residuals)
+
+
+```
+
+
+
+# Ljung-Box Q Statistic in R
+```{r}
+
+Box.test(model_1$residuals,type = "Ljung-Box")
+
+Box.test(model_2$residuals, type = "Ljung-Box")
+
+Box.test(model_3$residuals, type = "Ljung-Box")
+
+
+```
+
+
+
+# Forecast
+
+```{r}
+
+# Model - 1
+
+dcpi_forecast_model_1 <- forecast(model_1, h = 6)
+print(dcpi_forecast_model_1)
+
+
+# Model - 2
+dcpi_forecast_model_2 <- forecast(model_2,h  = 6)
+print(dcpi_forecast_model_2)
+
+
+# Model - 3
+dcpi_forecast_model_3 <- forecast(model_3,h = 6)
+print(dcpi_forecast_model_3)
+
+
+```
+
+
+
+```{r}
+
+autoplot(dcpi_forecast_model_1,xlim=c(2013.35,2020.12))
+autoplot(dcpi_forecast_model_2,xlim=c(2013.35,2020.12))
+autoplot(dcpi_forecast_model_3,xlim=c(2013.35,2020.12))
+
+```
+
+
+
+
+
+# Loss Functions
+
+```{r, warning=FALSE}
+
+
+loss_functions <- function(predict, actual) {
+  predict <- as.vector(predict)
+  actual <- as.vector(actual)
+  mse <- mean((predict-actual)^2)
+  mae <- mean(abs(predict-actual))
+  mape <- mean(abs((predict-actual)/actual)*100)
+  msle <- mean((log(actual)- log(predict) )^2)
+  return(list(mse = mse,
+              mae = mae,
+              mape = mape,
+              msle = msle))
+}
+
+print("Model 1")
+# Model - 1
+loss_model_1 <- loss_functions(dcpi_forecast_model_1$mean, test)
+print(loss_model_1)
+
+print("Model 2")
+# Model - 2
+loss_model_2 <- loss_functions(dcpi_forecast_model_2$mean, test)
+print(loss_model_2)
+
+print("Model 3")
+# Model - 3
+loss_model_3 <- loss_functions(dcpi_forecast_model_3$mean, test)
+print(loss_model_3)
+
+
+```
+
+```{r}
+
+
+print(paste("Model RMSE:", sqrt(loss_model_1$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_1$mae)))
+
+print(paste("Model RMSE:", sqrt(loss_model_2$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_2$mae)))
+
+print(paste("Model RMSE:", sqrt(loss_model_3$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_3$mae)))
+```
+
+```{r, warning=FALSE}
+cpi_combination <- lm(test ~ dcpi_forecast_model_1$mean[1:6] + dcpi_forecast_model_2$mean[1:6] + dcpi_forecast_model_3$mean[1:6])
+summary(cpi_combination)
+
+# root mean square error
+print(sqrt(mean(test - cpi_combination$fitted.values)^2))
+```
+
+
+```{r}
+
+cpi_combination_object <- foreccomb(test1,
+                                cbind(dcpi_forecast_model_1$mean[1:6],
+                                      dcpi_forecast_model_2$mean[1:6],
+                                      dcpi_forecast_model_3$mean[1:6]))
+print(cpi_combination_object)
+
+cpi_granger_bates <- comb_BG(cpi_combination_object)
+print(cpi_granger_bates)
+
+```
+
+```{r}
+
+# Model forecasts (from part iv)
+model1_forecast1 <- c(255.3287, 255.6677, 256.0955, 256.4341, 256.8220, 257.1310) 
+model2_forecast1 <- c(255.2423, 255.4718, 255.5851, 255.6167,255.6442, 255.6998)
+model3_forecast1 <- c(255.3386, 255.7342, 256.1003, 256.4357,256.7844,257.1351)
+
+# Actual test observations
+test_obs1 <- c(255.685, 256.059, 256.511, 257.244, 257.803, 258.616)  
+
+# Assume model 1 is preferred 
+preferred_model1 <- model3_forecast1
+
+# Create forecast combination object
+fc_object1 <- foreccomb(test_obs1, cbind(model1_forecast1, model2_forecast1, model3_forecast1))
+
+# Get Granger-Bates combined forecast
+gb_forecast1 <- comb_BG(fc_object1)
+
+# Plot forecasts
+plot(test_obs1, type="o", col="black", ylim=c(254,260), 
+     xlab="Time", ylab="Value")
+lines(preferred_model1, col="blue", lwd=2) 
+lines(gb_forecast1$Fitted, col="red", lwd=2)
+legend("topright", legend=c("Observed", "Preferred Model", "Granger-Bates"),
+       col=c("black", "blue", "red"), lwd=c(1,2,2), cex=0.8)
+
+```
+
+```{r}
+# Compute forecast errors
+preferred_error1 <- sqrt(mean((test_obs1 - preferred_model1)^2)) 
+gb_error1 <- sqrt(mean((test_obs1 - gb_forecast1$Fitted)^2))
+
+# Print forecast errors
+print(paste("Preferred model RMSE:", round(preferred_error1, 2)))
+print(paste("Granger-Bates RMSE:", round(gb_error1, 2)))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
