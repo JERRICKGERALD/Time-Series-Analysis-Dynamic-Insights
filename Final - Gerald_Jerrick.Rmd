@@ -1,0 +1,329 @@
+---
+title: "Final - Code"
+author: "Jerrick Gerald"
+date: "2023-12-07"
+output: html_document
+---
+
+```{r}
+#INCLUDE PACMAN LIBRARY
+pacman::p_load(fredr, ggplot2, tidyverse, tsbox, tseries,
+               tsibble, forecast, tseries, lubridate,
+               expsmooth, WDI, knitr, broom, ggpubr,
+               stargazer, urca, patchwork,ForecastComb)
+
+#VARS LIBARARY
+library(vars)
+```
+
+
+```{r}
+#Loading all the dataset from FRED
+
+fredr_set_key("5a3f5a4d628dad0eeebb7dc5711f691c")
+cpi <- fredr(series_id = "CPIAUCSL",
+                    observation_start = as.Date("1992-01-01"),
+                    observation_end = as.Date("2019-12-31"))
+
+ppi <- fredr(series_id = "PPIACO",
+                    observation_start = as.Date("1992-01-01"),
+                    observation_end = as.Date("2019-12-31")) 
+ci <- fredr(series_id = "CIVPART",
+                    observation_start = as.Date("1992-01-01"),
+                    observation_end = as.Date("2019-12-31")) 
+
+bp <- fredr(series_id = "BOPGSTB",
+                    observation_start = as.Date("1992-01-01"),
+                    observation_end = as.Date("2019-12-31")) 
+```
+
+
+```{r}
+
+# Combine data into a data frame
+fred_data <- data.frame(cpi$date,cpi$value,ppi$value,ci$value,bp$value)
+
+# Print the first few rows of the data frame
+head(fred_data)
+```
+
+```{r}
+#Johansen_test
+
+johansen_test <- ca.jo(fred_data[,c("cpi.value", "ppi.value", "ci.value","bp.value")], 
+                         type = 'eigen', spec = 'transitory',
+                         ecdet = 'none', K = 2)
+summary(johansen_test)
+
+```
+
+```{r}
+#VARselect
+var_select_result <- VARselect(fred_data[2:4],lag.max=7)
+# Print the lag order selection results
+print(var_select_result)
+
+```
+
+```{r}
+
+diffdata<-data.frame(cpi=diff(fred_data[,2]),ppi=diff(fred_data[,3]),ci=diff(fred_data[,4]),bp=diff(fred_data[,5]))
+
+head(diffdata)
+
+```
+
+
+```{r}
+
+# TRAIN - TEST SPLIT EXCEPT EXOGEN
+
+train <- diffdata[1:325,]
+test <- diffdata[326:335,]
+
+train <- train[,-4]
+test<- test[,-4]
+head(test)
+
+# EXOGEN TRAIN TEST SPLIT - Trade balance is chosed as Exogenous variable
+exog_data_train <- data.frame(bp = diffdata$bp[1:325]) # EXOGEN SPLIT
+exog_data_test <- data.frame(bp = diffdata$bp[326:335])
+
+
+```
+
+```{r}
+#VAR MODEL - VAR(6)
+library(vars)
+varmodel <- VAR(y= train, p = 6, type = "none",season = 12,exogen = exog_data_train)
+summary(varmodel)
+
+```
+
+```{r}
+
+forecast_values <- predict(varmodel,n.ahead = 10,dumvar = exog_data_test)
+forecast_values
+
+
+plot(test$cpi, type = "l", col = "blue")
+lines(forecast_values$fcst$cpi[,1], col = "red")
+legend("topleft", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"))
+
+plot(test$ppi, type = "l", col = "blue")
+lines(forecast_values$fcst$ppi[,1], col = "red")
+legend("topleft", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lty = 1)
+
+plot(test$ci, type = "l", col = "blue")
+lines(forecast_values$fcst$ci[,1], col = "red")
+legend("topleft", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lty = 1)
+
+```
+
+
+```{r}
+# IMPULSE RESPONSE FUNCTION
+
+irf1<- irf(varmodel,n.ahead=10,ortho=T,boot=T)
+plot(irf1)
+
+```
+
+```{r}
+
+# Variance decomposition - Model VAR(6)
+
+f1 <- fevd(varmodel,n.ahead=10)
+print(f1)
+plot(f1)
+
+```
+## VAR MODEL 2 - VAR(3)
+
+```{r}
+# VAR model
+varmodel1 <- VAR(y= train, p = 3, type = "none",season = 12,exogen = exog_data_train)
+summary(varmodel1)
+
+```
+
+
+```{r}
+# Predict forecast values for the next 10 periods - Model 1 VAR(3)
+predict_varmodel <- predict(varmodel1, n.ahead = 10,dumvar=exog_data_test)
+predict_varmodel
+```
+
+
+
+```{r}    
+
+plot(test$cpi, type = "l", col = "blue")
+lines(predict_varmodel$fcst$cpi[,1], col = "red")
+legend("topleft", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"))
+
+plot(test$ppi, type = "l", col = "blue")
+lines(predict_varmodel$fcst$ppi[,1], col = "red")
+legend("topleft", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lty = 1)
+
+plot(test$ci, type = "l", col = "blue")
+lines(predict_varmodel$fcst$ci[,1], col = "red")
+legend("topleft", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lty = 1)
+
+```
+
+```{r}
+# IRF - VAR(3)
+
+irf2<- irf(varmodel1,n.ahead=10,ortho=T,boot=T)
+plot(irf2)
+
+```
+
+```{r}
+# Variance decomposition - Model VAR(3)
+
+f2<- fevd(varmodel1,n.ahead=3)
+f2
+plot(f2)
+```
+
+## VAR MODEL - 3 VAR(2)
+
+```{r}
+
+varmodel3 <- VAR(y= train, p = 2, type = "none",season = 12,exogen = exog_data_train)
+
+summary(varmodel3)
+
+```
+
+
+```{r}
+predict_varmodel1 <- predict(varmodel3, n.ahead = 10,dumvar = exog_data_test)
+
+predict_varmodel1
+
+
+# Predict forecast values for the next 10 periods - Model 1 VAR(3)
+
+
+plot(test$cpi, type = "l", col = "blue")
+lines(predict_varmodel1$fcst$cpi[,1], col = "red")
+legend("topleft", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"))
+
+plot(test$ppi, type = "l", col = "blue")
+lines(predict_varmodel1$fcst$ppi[,1], col = "red")
+legend("topleft", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lty = 1)
+
+plot(test$ci, type = "l", col = "blue")
+lines(predict_varmodel1$fcst$ci[,1], col = "red")
+legend("topleft", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lty = 1)
+
+```
+
+
+
+```{r}
+# Impulse Response Function
+
+irf3<- irf(varmodel3,n.ahead=10,ortho=T,boot=T)
+plot(irf3)
+
+```
+
+
+```{r}
+
+f3 <- fevd(varmodel3,n.ahead=10)
+f3
+plot(f3)
+
+
+```
+
+
+
+```{r}
+
+loss_functions <- function(predict, actual) {
+  predict <- as.vector(predict)
+  actual <- as.vector(actual)
+  mse <- mean((predict-actual)^2)
+  mae <- mean(abs(predict-actual))
+  mape <- mean(abs((predict-actual)/actual)*100)
+  msle <- mean((log(actual)- log(predict) )^2)
+  return(list(mse = mse,
+              mae = mae,
+              mape = mape,
+              msle = msle))
+}
+
+```
+
+
+
+```{r}
+
+#CPI
+print("Model 1")
+# Model - 1
+model_11 <- loss_functions(varmodel$varresult$cpi$coefficients, test$cpi)
+print(model_11)
+
+print("Model 2")
+# Model - 2
+model_21 <- loss_functions(varmodel1$varresult$cpi$coefficients, test$cpi)
+print(model_21)
+
+print("Model 3")
+# Model - 3
+model_31 <- loss_functions(varmodel3$varresult$cpi$coefficients, test$cpi)
+print(model_31)
+
+
+
+#PPI -------------------------------------------------------------------------------------
+print("PPI")
+# Model - 1
+model_4 <- loss_functions(varmodel$varresult$ppi$coefficients, test$ppi)
+print(model_4)
+
+print("Model 2")
+# Model - 2
+model_5 <- loss_functions(varmodel1$varresult$ppi$coefficients, test$ppi)
+print(model_5)
+
+print("Model 3")
+# Model - 3
+model_6 <- loss_functions(varmodel3$varresult$ppi$coefficients, test$ppi)
+print(model_6)
+
+
+#CI -----------------------------------------------------------------------------------
+print("CIVPART (A) CI")
+# Model - 1
+model_1 <- loss_functions(varmodel$varresult$ci$coefficients, test$ci)
+print(model_1)
+
+print("Model 2")
+# Model - 2
+model_2 <- loss_functions(varmodel1$varresult$ci$coefficients, test$ci)
+print(model_2)
+
+print("Model 3")
+# Model - 3
+model_3 <- loss_functions(varmodel3$varresult$ci$coefficients, test$ci)
+print(model_3)
+
+
+```

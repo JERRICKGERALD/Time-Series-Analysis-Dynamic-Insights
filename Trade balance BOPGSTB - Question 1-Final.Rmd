@@ -1,0 +1,343 @@
+---
+title: "(Consumer Price Index for All Urban Consumers: All Items in U.S. City Average) "
+author: "Jerrick"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+pacman::p_load(fredr, ggplot2, tidyverse, tsbox, tseries,
+               tsibble, forecast, tseries, lubridate,
+               expsmooth, WDI, knitr, broom, ggpubr,
+               stargazer, urca, patchwork,ForecastComb)
+library(quantmod)
+library(tidyquant)
+library(seasonal)
+
+```
+
+
+
+```{r}
+#s
+
+# Use the correct column names in the select function0f7df11eede0835a508d2ca0f7df11eede0835a508d2ca2")
+
+
+# Install and load necessary libraries
+
+# Install and load necessary libraries
+
+library(quantmod)
+library(tidyquant)
+library(seasonal)
+
+
+bp <- fredr(series_id = "BOPGSTB",
+                    observation_start = as.Date("1992-01-01"),
+                    observation_end = as.Date("2019-12-31")) %>%
+  select(date, series_id, value) %>%
+  mutate(index_first_diff = value - lag(value),
+         index_second_diff = difference(value, differences = 2)) %>%
+  tsibble(index = date)
+  
+  
+
+
+```
+
+
+
+# Plotting
+  
+```{r}
+source(file= paste0('intord.R'))
+head(bp)
+
+intord(bp$value, year = 1992, freq = 12, period = 1)
+
+```
+First difference 
+
+# ACF and PACF
+
+```{r}
+
+acf_series_one_1 <- ggAcf(bp$value,lag.max = 36) + ggtitle('ACF')
+
+
+pacf_series_one_1 <- ggPacf(bp$value,lag.max = 36) + ggtitle('PACF')
+
+
+acf_series_one_1|pacf_series_one_1
+
+
+```
+
+
+```{r}
+
+pacman::p_load(patchwork)
+
+(ggAcf(diff(bp$value))|ggPacf(diff(bp$value)))
+
+
+```
+
+PACF decays faster than the PACF so it is an AR model
+
+
+# Train and test split
+
+```{r}
+
+tr <- ts(bp$value[1:330],start=c(1992,1),freq=12)
+
+te <- ts(bp$value[331:336],start=c(2019,7),freq=12)
+te1<-bp$value[331:336]
+
+te1
+
+```
+
+
+# Modeling
+
+```{r}
+# Model - 1
+
+
+model_1 <- Arima(tr,order = c(2, 1, 2))
+
+print(model_1)
+```
+
+
+
+```{r}
+# Model - 2
+
+model_2 <- Arima(tr,order = c(3, 1, 3))
+
+print(model_2)
+
+```
+
+
+
+```{r}
+
+# Model - 3
+model_3 <- Arima(tr,order = c(2, 1,3))
+print(model_3)
+
+```
+
+
+
+
+# Brute force model
+```{r}
+
+brute_force_model <- auto.arima(tr,ic = 'aic',trace = T)
+
+```
+
+
+# Serial Correlation
+
+```{r}
+
+ggAcf(model_1$residuals)
+
+ggAcf(model_2$residuals)
+
+ggAcf(model_3$residuals)
+
+
+```
+
+
+
+# Ljung-Box Q Statistic in R
+```{r}
+
+Box.test(model_1$residuals,type = "Ljung-Box")
+
+Box.test(model_2$residuals, type = "Ljung-Box")
+
+Box.test(model_3$residuals, type = "Ljung-Box")
+
+
+```
+
+
+
+# Forecast
+
+```{r}
+
+# Model - 1
+
+dbp_forecast_model_1 <- forecast(model_1, h = 6)
+print(dbp_forecast_model_1)
+
+
+# Model - 2
+dbp_forecast_model_2 <- forecast(model_2,h  = 6)
+print(dbp_forecast_model_2)
+
+
+# Model - 3
+dbp_forecast_model_3 <- forecast(model_3,h = 6)
+print(dbp_forecast_model_3)
+
+
+```
+
+
+
+```{r}
+
+autoplot(dbp_forecast_model_1,xlim=c(2013.35,2020.12))
+autoplot(dbp_forecast_model_2,xlim=c(2013.35,2020.12))
+autoplot(dbp_forecast_model_3,xlim=c(2013.35,2020.12))
+
+```
+
+
+
+
+
+# Loss Functions
+
+```{r, warning=FALSE}
+
+
+loss_functions <- function(predict, actual) {
+  predict <- as.vector(predict)
+  actual <- as.vector(actual)
+  mse <- mean((predict-actual)^2)
+  mae <- mean(abs(predict-actual))
+  mape <- mean(abs((predict-actual)/actual)*100)
+  msle <- mean((log(actual)- log(predict) )^2)
+  return(list(mse = mse,
+              mae = mae,
+              mape = mape,
+              msle = msle))
+}
+
+print("Model 1")
+# Model - 1
+loss_model_12 <- loss_functions(dbp_forecast_model_1$mean, te)
+print(loss_model_12)
+
+print("Model 2")
+# Model - 2
+loss_model_21 <- loss_functions(dbp_forecast_model_2$mean, te)
+print(loss_model_21)
+
+print("Model 3")
+# Model - 3
+loss_model_31 <- loss_functions(dbp_forecast_model_3$mean, te)
+print(loss_model_31)
+
+
+```
+
+```{r}
+
+
+print(paste("Model RMSE:", sqrt(loss_model_12$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_12$mae)))
+
+print(paste("Model RMSE:", sqrt(loss_model_21$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_21$mae)))
+
+print(paste("Model RMSE:", sqrt(loss_model_31$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_31$mae)))
+```
+
+```{r, warning=FALSE}
+bp_combination <- lm(te ~ dbp_forecast_model_1$mean[1:6] + dbp_forecast_model_2$mean[1:6] + dbp_forecast_model_3$mean[1:6])
+summary(bp_combination)
+
+# root mean square error
+print(sqrt(mean(te - bp_combination$fitted.values)^2))
+```
+
+
+```{r}
+
+dp_combination_object <- foreccomb(te1,
+                                cbind(dbp_forecast_model_1$mean[1:6],
+                                      dbp_forecast_model_2$mean[1:6],
+                                      dbp_forecast_model_3$mean[1:6]))
+print(dp_combination_object)
+
+bp_granger_bates <- comb_BG(dp_combination_object)
+print(bp_granger_bates)
+
+```
+
+```{r}
+
+# Model forecasts (from part iv)
+model1_forecast1 <- c(-48843.88, -49080.61, -48680.17, -48913.32, -48925.62, -48782.92)
+model2_forecast1 <- c(-49117.71, -49324.76, -48840.82, -49104.42, -49085.12, -48970.18)
+model3_forecast1 <- c(-49293.01, -49360.69, -48848.41, -49162.54, -49140.79, -49041.15)
+
+# Actual test observations
+test_obs1 <- c(-48289 ,-48565, -44542, -41804 ,-38956, -44107)  
+
+# Assume model 1 is preferred 
+preferred_model1 <- model1_forecast1
+
+# Create forecast combination object
+fc_object1 <- foreccomb(test_obs1, cbind(model1_forecast1, model2_forecast1, model3_forecast1))
+
+# Get Granger-Bates combined forecast
+gb_forecast1 <- comb_BG(fc_object1)
+
+# Plot forecasts
+plot(test_obs1, type="o", col="black", ylim=c(-49700,-35000), 
+     xlab="Time", ylab="Value")
+lines(preferred_model1, col="blue", lwd=2) 
+lines(gb_forecast1$Fitted, col="red", lwd=2)
+legend("topright", legend=c("Observed", "Preferred Model", "Granger-Bates"),
+       col=c("black", "blue", "red"), lwd=c(1,2,2), cex=0.8)
+
+```
+
+```{r}
+# Compute forecast errors
+preferred_error1 <- sqrt(mean((test_obs1 - preferred_model1)^2)) 
+gb_error1 <- sqrt(mean((test_obs1 - gb_forecast1$Fitted)^2))
+
+# Print forecast errors
+print(paste("Preferred model RMSE:", round(preferred_error1, 2)))
+print(paste("Granger-Bates RMSE:", round(gb_error1, 2)))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

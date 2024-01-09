@@ -1,0 +1,322 @@
+---
+title: "(Consumer Price Index for All Urban Consumers: All Items in U.S. City Average) "
+author: "Jerrick"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+pacman::p_load(fredr, ggplot2, tidyverse, tsbox, tseries,
+               tsibble, forecast, tseries, lubridate,
+               expsmooth, WDI, knitr, broom, ggpubr,
+               stargazer, urca, patchwork,ForecastComb)
+
+```
+
+
+
+```{r}
+fredr_set_key("925135280f7df11eede0835a508d2ca2")
+civ <- fredr(series_id = "CIVPART",
+                    observation_start = as.Date("1992-01-01"),
+                    observation_end = as.Date("2019-12-31"))
+  
+
+source(file= paste0('intord.R'))
+```
+
+
+
+# Plotting
+  
+```{r}
+
+intord(civ$value, year = 1992, freq = 12, period = 1)
+
+
+```
+First difference 
+
+# ACF and PACF
+
+```{r}
+
+acf_series_one_1 <- ggAcf(civ$value,lag.max = 36) + ggtitle('ACF')
+
+
+pacf_series_one_1 <- ggPacf(civ$value,lag.max = 36) + ggtitle('PACF')
+
+
+acf_series_one_1|pacf_series_one_1
+
+
+```
+
+
+```{r}
+
+pacman::p_load(patchwork)
+
+(ggAcf(diff(civ$value))|ggPacf(diff(civ$value)))
+
+
+```
+
+PACF decays faster than the PACF so it is an AR model
+
+
+# Train and test split
+
+```{r}
+
+trn <- ts(civ$value[1:330],start=c(1992,1),freq=12)
+
+tet <- ts(civ$value[331:336],start=c(2019,7),freq=12)
+tet1<-civ$value[331:336]
+
+tet
+
+```
+
+
+# Modeling
+
+```{r}
+# Model - 1
+# 
+
+model_11 <- Arima(trn,order = c(2, 1, 2))
+
+print(model_11)
+```
+
+
+
+```{r}
+# Model - 2
+# 
+model_21 <- Arima(trn,order = c(4, 1, 1))
+
+print(model_21)
+
+```
+
+
+
+```{r}
+
+# Model - 3
+model_31 <- Arima(trn,order = c(5, 1, 5))
+print(model_31)
+
+```
+
+
+
+
+# Brute force model
+```{r}
+
+brute_force_model <- auto.arima(trn,ic = 'aic',trace = T)
+
+```
+
+
+# Serial Correlation
+
+```{r}
+
+ggAcf(model_11$residuals)
+
+ggAcf(model_21$residuals)
+
+ggAcf(model_31$residuals)
+
+
+```
+
+
+
+# Ljung-Box Q Statistic in R
+```{r}
+
+Box.test(model_11$residuals,type = "Ljung-Box")
+
+Box.test(model_21$residuals, type = "Ljung-Box")
+
+Box.test(model_31$residuals, type = "Ljung-Box")
+
+
+```
+
+
+
+# Forecast
+
+```{r}
+
+# Model - 1
+
+dciv_forecast_model_1 <- forecast(model_11, h = 6)
+print(dciv_forecast_model_1)
+
+
+# Model - 2
+dciv_forecast_model_2 <- forecast(model_21,h  = 6)
+print(dciv_forecast_model_2)
+
+
+# Model - 3
+dciv_forecast_model_3 <- forecast(model_31,h = 6)
+print(dciv_forecast_model_3)
+
+
+```
+
+
+
+```{r}
+
+autoplot(dciv_forecast_model_1,xlim=c(2013.35,2020.12))
+autoplot(dciv_forecast_model_2,xlim=c(2013.35,2020.12))
+autoplot(dciv_forecast_model_3,xlim=c(2013.35,2020.12))
+
+```
+
+
+
+
+
+# Loss Functions
+
+```{r, warning=FALSE}
+
+
+loss_functions <- function(predict, actual) {
+  predict <- as.vector(predict)
+  actual <- as.vector(actual)
+  mse <- mean((predict-actual)^2)
+  mae <- mean(abs(predict-actual))
+  mape <- mean(abs((predict-actual)/actual)*100)
+  msle <- mean((log(actual)- log(predict) )^2)
+  return(list(mse = mse,
+              mae = mae,
+              mape = mape,
+              msle = msle))
+}
+
+print("Model 1")
+# Model - 1
+loss_model_1 <- loss_functions(dciv_forecast_model_1$mean, tet)
+print(loss_model_1)
+
+print("Model 2")
+# Model - 2
+loss_model_2 <- loss_functions(dciv_forecast_model_2$mean, tet)
+print(loss_model_2)
+
+print("Model 3")
+# Model - 3
+loss_model_3 <- loss_functions(dciv_forecast_model_3$mean, tet)
+print(loss_model_3)
+
+
+```
+
+```{r}
+
+
+print(paste("Model RMSE:", sqrt(loss_model_1$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_1$mae)))
+
+print(paste("Model RMSE:", sqrt(loss_model_2$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_2$mae)))
+
+print(paste("Model RMSE:", sqrt(loss_model_3$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_3$mae)))
+```
+
+```{r, warning=FALSE}
+
+civ_combination <- lm(tet ~ dciv_forecast_model_1$mean[1:6] + dciv_forecast_model_2$mean[1:6] + dciv_forecast_model_3$mean[1:6])
+summary(civ_combination)
+
+# root mean square error
+print(sqrt(mean(tet - civ_combination$fitted.values)^2))
+```
+
+
+```{r}
+
+civ_combination_object <- foreccomb(tet1,
+                                cbind(dciv_forecast_model_1$mean[1:6],
+                                      dciv_forecast_model_2$mean[1:6],
+                                      dciv_forecast_model_3$mean[1:6]))
+print(civ_combination_object)
+
+civ_granger_bates <- comb_BG(civ_combination_object)
+print(civ_granger_bates)
+
+```
+
+```{r}
+
+# Model forecasts (from part iv)
+model1_forecast1 <- c(62.98381, 62.98404, 62.98235, 62.98194, 62.98166, 62.98154)
+model2_forecast1 <- c(62.98889, 62.99548, 62.99403, 62.98809, 62.98764, 62.98706)
+model3_forecast1 <- c(62.98746, 63.00765, 63.00689, 63.00924, 62.99466, 62.98603)
+
+# Actual test observations
+test_obs1 <- c(63.1 ,63.1, 63.2, 63.3 ,63.3, 63.3)  
+
+# Assume model 1 is preferred 
+preferred_model1 <- model1_forecast1
+
+# Create forecast combination object
+fc_object1 <- foreccomb(test_obs1, cbind(model1_forecast1, model2_forecast1, model3_forecast1))
+
+# Get Granger-Bates combined forecast
+gb_forecast1 <- comb_BG(fc_object1)
+
+# Plot forecasts
+plot(test_obs1, type="o", col="black", ylim=c(62.88888,63.99999), 
+     xlab="Time", ylab="Value")
+lines(preferred_model1, col="blue", lwd=2) 
+lines(gb_forecast1$Fitted, col="red", lwd=2)
+legend("topright", legend=c("Observed", "Preferred Model", "Granger-Bates"),
+       col=c("black", "blue", "red"), lwd=c(1,2,2), cex=0.8)
+
+```
+
+```{r}
+# Compute forecast errors
+preferred_error1 <- sqrt(mean((test_obs1 - preferred_model1)^2)) 
+gb_error1 <- sqrt(mean((test_obs1 - gb_forecast1$Fitted)^2))
+
+# Print forecast errors
+print(paste("Preferred model RMSE:", round(preferred_error1, 2)))
+print(paste("Granger-Bates RMSE:", round(gb_error1, 2)))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
